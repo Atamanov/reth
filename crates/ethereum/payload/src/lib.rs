@@ -243,12 +243,12 @@ where
                 &pool_tx,
                 InvalidPoolTransactionError::ExceedsGasLimit(pool_tx.gas_limit(), block_gas_limit),
             );
-            continue
+            continue;
         }
 
         // check if the job was cancelled, if so we can exit early
         if cancel.is_cancelled() {
-            return Ok(BuildOutcome::Cancelled)
+            return Ok(BuildOutcome::Cancelled);
         }
 
         // convert tx to a signed transaction
@@ -274,7 +274,7 @@ where
                         },
                     ),
                 );
-                continue
+                continue;
             }
         }
 
@@ -299,10 +299,10 @@ where
                             ),
                         );
                     }
-                    continue
+                    continue;
                 }
                 // this is an error that we should treat as fatal for this attempt
-                return Err(PayloadBuilderError::evm(err))
+                return Err(PayloadBuilderError::evm(err));
             }
         };
 
@@ -349,7 +349,7 @@ where
         drop(evm);
 
         // can skip building the block
-        return Ok(BuildOutcome::Aborted { fees: total_fees, cached_reads })
+        return Ok(BuildOutcome::Aborted { fees: total_fees, cached_reads });
     }
 
     // calculate the requests and the requests root
@@ -379,6 +379,9 @@ where
 
     let withdrawals_root =
         commit_withdrawals(&mut db, &chain_spec, attributes.timestamp, &attributes.withdrawals)?;
+
+    // Get the gas used value from the last receipt, which includes precompile costs
+    let gas_used = receipts.last().map(|r| r.cumulative_gas_used).unwrap_or(cumulative_gas_used);
 
     // merge all transitions into bundle state, this would apply the withdrawal balance changes
     // and 4788 contract call
@@ -451,7 +454,7 @@ where
         number: parent_header.number + 1,
         gas_limit: block_gas_limit,
         difficulty: U256::ZERO,
-        gas_used: cumulative_gas_used,
+        gas_used,
         extra_data: builder_config.extra_data,
         parent_beacon_block_root: attributes.parent_beacon_block_root,
         blob_gas_used,
