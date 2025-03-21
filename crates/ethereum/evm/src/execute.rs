@@ -23,6 +23,7 @@ use reth_primitives::{EthPrimitives, Receipt, RecoveredBlock};
 use reth_primitives_traits::{BlockBody, SignedTransaction};
 use revm::db::State;
 use revm_primitives::{db::DatabaseCommit, ResultAndState};
+use tracing::{info, warn};
 
 /// Factory for [`EthExecutionStrategy`].
 #[derive(Debug, Clone)]
@@ -168,8 +169,8 @@ where
 
             // append gas used
             cumulative_gas_used += result.gas_used();
-            println!(
-                "cumulative_gas_used: {} {}",
+            warn!(
+                "!! cumulative_gas_used: {} {}",
                 transaction.recalculate_hash(),
                 cumulative_gas_used
             );
