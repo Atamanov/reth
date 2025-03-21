@@ -5,7 +5,6 @@ use crate::{
     EthEvmConfig,
 };
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
-use alloy_consensus::TxReceipt;
 use alloy_consensus::{BlockHeader, Transaction};
 use alloy_eips::{eip6110, eip7685::Requests};
 use reth_chainspec::{ChainSpec, EthereumHardfork, EthereumHardforks, MAINNET};
@@ -169,7 +168,11 @@ where
 
             // append gas used
             cumulative_gas_used += result.gas_used();
-
+            println!(
+                "cumulative_gas_used: {} {}",
+                transaction.recalculate_hash(),
+                cumulative_gas_used
+            );
             // Push transaction changeset and calculate header bloom filter for receipt.
             receipts.push(Receipt {
                 tx_type: transaction.tx_type(),
@@ -184,10 +187,11 @@ where
         // Ensure the header's gas_used field matches the cumulative_gas_used for validation
         // This value is the source of truth that will be compared during validation
         let gas_used = if !receipts.is_empty() {
-            receipts.last().unwrap().cumulative_gas_used()
+            receipts.last().unwrap().cumulative_gas_used
         } else {
             cumulative_gas_used
         };
+
         Ok(ExecuteOutput { receipts, gas_used })
     }
 
