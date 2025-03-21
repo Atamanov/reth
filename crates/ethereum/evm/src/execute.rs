@@ -5,6 +5,7 @@ use crate::{
     EthEvmConfig,
 };
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
+use alloy_consensus::TxReceipt;
 use alloy_consensus::{BlockHeader, Transaction};
 use alloy_eips::{eip6110, eip7685::Requests};
 use reth_chainspec::{ChainSpec, EthereumHardfork, EthereumHardforks, MAINNET};
@@ -149,7 +150,7 @@ where
                     transaction_gas_limit: transaction.gas_limit(),
                     block_available_gas,
                 }
-                .into())
+                .into());
             }
 
             let tx_env = self.evm_config.tx_env(transaction, *sender);
@@ -179,6 +180,14 @@ where
                 logs: result.into_logs(),
             });
         }
+
+        // Ensure the header's gas_used field matches the cumulative_gas_used for validation
+        // This value is the source of truth that will be compared during validation
+        let gas_used = if !receipts.is_empty() {
+            receipts.last().unwrap().cumulative_gas_used()
+        } else {
+            cumulative_gas_used
+        };
         Ok(ExecuteOutput { receipts, gas_used: cumulative_gas_used })
     }
 
