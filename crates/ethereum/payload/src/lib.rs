@@ -9,7 +9,9 @@
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 #![allow(clippy::useless_let_if_seq)]
 
-use alloy_consensus::{BlockHeader, Header, Transaction, Typed2718, EMPTY_OMMER_ROOT_HASH};
+use alloy_consensus::{
+    BlockHeader, Header, Transaction, TxReceipt, Typed2718, EMPTY_OMMER_ROOT_HASH,
+};
 use alloy_eips::{eip4844::DATA_GAS_PER_BLOB, eip6110, eip7685::Requests, merge::BEACON_NONCE};
 use alloy_primitives::U256;
 use reth_basic_payload_builder::{
@@ -381,7 +383,7 @@ where
         commit_withdrawals(&mut db, &chain_spec, attributes.timestamp, &attributes.withdrawals)?;
 
     // Get the gas used value from the last receipt, which includes precompile costs
-    let gas_used = receipts.last().map(|r| r.cumulative_gas_used).unwrap_or(cumulative_gas_used);
+    let gas_used = receipts.last().map(|r| r.cumulative_gas_used()).unwrap_or(cumulative_gas_used);
 
     // merge all transitions into bundle state, this would apply the withdrawal balance changes
     // and 4788 contract call
