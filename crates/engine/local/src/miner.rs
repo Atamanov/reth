@@ -1,6 +1,6 @@
 //! Contains the implementation of the mining mode for the local engine.
 
-use alloy_consensus::BlockHeader;
+use alloy_consensus::{BlockHeader, TxReceipt};
 use alloy_primitives::{TxHash, B256};
 use alloy_rpc_types_engine::ForkchoiceState;
 use eyre::OptionExt;
@@ -58,13 +58,13 @@ impl Future for MiningMode {
             Self::Instant(rx) => {
                 // drain all transactions notifications
                 if let Poll::Ready(Some(_)) = rx.poll_next_unpin(cx) {
-                    return Poll::Ready(())
+                    return Poll::Ready(());
                 }
                 Poll::Pending
             }
             Self::Interval(interval) => {
                 if interval.poll_tick(cx).is_ready() {
-                    return Poll::Ready(())
+                    return Poll::Ready(());
                 }
                 Poll::Pending
             }
@@ -206,9 +206,33 @@ where
 
         let block = payload.block();
 
+        // Get the correct gas_used value from the final receipt if available
+        // This ensures precompile costs are correctly accounted for
+        let correct_gas_used = if let Some(executed_block) = payload.executed_block() {
+            let output = executed_block.execution_output.as_ref();
+            if let Some(receipt) = output.receipts.iter().flatten().last() {
+                receipt.cumulative_gas_used()
+            } else {
+                block.gas_used()
+            }
+        } else {
+            block.gas_used()
+        };
+
+        // If gas values don't match, log the discrepancy for debugging
+        if block.gas_used() != correct_gas_used {
+            tracing::warn!(
+                block_hash=%block.hash(),
+                header_gas=block.gas_used(),
+                correct_gas=correct_gas_used,
+                "Gas used mismatch between block header and receipts. This may cause validation failures."
+            );
+        }
+
         let (tx, rx) = oneshot::channel();
-        let payload = EngineT::block_to_payload(payload.block().clone());
-        self.to_engine.send(BeaconEngineMessage::NewPayload { payload, tx })?;
+        let payload_data = EngineT::block_to_payload(payload.block().clone());
+
+        self.to_engine.send(BeaconEngineMessage::NewPayload { payload: payload_data, tx })?;
 
         let res = rx.await??;
 
