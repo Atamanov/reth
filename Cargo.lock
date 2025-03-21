@@ -7681,6 +7681,7 @@ dependencies = [
  "revm-primitives",
  "secp256k1",
  "serde_json",
+ "tracing",
 ]
 
 [[package]]

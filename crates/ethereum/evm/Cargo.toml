@@ -29,6 +29,7 @@ alloy-primitives.workspace = true
 alloy-eips.workspace = true
 alloy-sol-types.workspace = true
 alloy-consensus.workspace = true
+tracing.workspace = true
 
 # Misc
 derive_more.workspace = true
