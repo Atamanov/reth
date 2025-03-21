@@ -10,7 +10,7 @@
 #![allow(clippy::useless_let_if_seq)]
 
 use alloy_consensus::{
-    BlockHeader, Header, Transaction, TxReceipt, Typed2718, EMPTY_OMMER_ROOT_HASH,
+    BlockHeader, Header, Transaction, TxReceipt, TxType, Typed2718, EMPTY_OMMER_ROOT_HASH,
 };
 use alloy_eips::{eip4844::DATA_GAS_PER_BLOB, eip6110, eip7685::Requests, merge::BEACON_NONCE};
 use alloy_primitives::U256;
@@ -19,7 +19,7 @@ use reth_basic_payload_builder::{
     PayloadConfig,
 };
 use reth_chainspec::{ChainSpec, ChainSpecProvider, EthChainSpec, EthereumHardforks};
-use reth_errors::RethError;
+use reth_errors::{BlockExecutionError, RethError};
 use reth_ethereum_primitives::{Block, BlockBody, Receipt, TransactionSigned};
 use reth_evm::{
     env::EvmEnv, system_calls::SystemCaller, ConfigureEvm, Evm, EvmError, InvalidTxError,
@@ -187,57 +187,72 @@ where
     let PayloadConfig { parent_header, attributes } = config;
 
     debug!(target: "payload_builder", id=%attributes.id, parent_header = ?parent_header.hash(), parent_number = parent_header.number, "building new payload");
-    let mut cumulative_gas_used = 0;
+    let mut cumulative_gas_used = 0u64;
     let block_gas_limit: u64 = evm_env.block_env.gas_limit.to::<u64>();
     let base_fee = evm_env.block_env.basefee.to::<u64>();
 
+    let mut receipts = Vec::new();
     let mut executed_txs = Vec::new();
 
-    let mut best_txs = best_txs(BestTransactionsAttributes::new(
-        base_fee,
-        evm_env.block_env.get_blob_gasprice().map(|gasprice| gasprice as u64),
-    ));
-    let mut total_fees = U256::ZERO;
-
-    let block_number = evm_env.block_env.number.to::<u64>();
-    let beneficiary = evm_env.block_env.coinbase;
-
+    // Create EVM instance first
+    let mut evm = evm_config.evm_with_env(&mut db, evm_env.clone());
     let mut system_caller = SystemCaller::new(evm_config.clone(), chain_spec.clone());
 
-    // apply eip-4788 pre block contract call
-    system_caller
-        .pre_block_beacon_root_contract_call(&mut db, &evm_env, attributes.parent_beacon_block_root)
-        .map_err(|err| {
-            warn!(target: "payload_builder",
-                parent_hash=%parent_header.hash(),
-                %err,
-                "failed to apply beacon root contract call for payload"
-            );
-            PayloadBuilderError::Internal(err.into())
-        })?;
+    // Execute pre-block system calls and create synthetic receipts for them
+    if let Some(result_and_state) = system_caller
+        .pre_block_beacon_root_contract_call(
+            &mut evm.db_mut(),
+            &evm_env,
+            attributes.parent_beacon_block_root,
+        )
+        .map_err(|err| PayloadBuilderError::Internal(err.into()))?
+    {
+        let gas_used = result_and_state.result.gas_used();
+        cumulative_gas_used = cumulative_gas_used.saturating_add(gas_used);
+        receipts.push(Receipt {
+            tx_type: TxType::Legacy,
+            success: result_and_state.result.is_success(),
+            cumulative_gas_used,
+            logs: result_and_state.result.into_logs().into_iter().collect(),
+            ..Default::default()
+        });
+        evm.db_mut().commit(result_and_state.state);
+    }
 
-    // apply eip-2935 blockhashes update
-    system_caller.pre_block_blockhashes_contract_call(
-        &mut db,
-        &evm_env,
-        parent_header.hash(),
-    )
-    .map_err(|err| {
-        warn!(target: "payload_builder", parent_hash=%parent_header.hash(), %err, "failed to update parent header blockhashes for payload");
-        PayloadBuilderError::Internal(err.into())
-    })?;
+    if let Some(result_and_state) = system_caller
+        .pre_block_blockhashes_contract_call(&mut evm.db_mut(), &evm_env, parent_header.hash())
+        .map_err(|err| PayloadBuilderError::Internal(err.into()))?
+    {
+        let gas_used = result_and_state.result.gas_used();
+        cumulative_gas_used = cumulative_gas_used.saturating_add(gas_used);
+        receipts.push(Receipt {
+            tx_type: TxType::Legacy,
+            success: result_and_state.result.is_success(),
+            cumulative_gas_used,
+            logs: result_and_state.result.into_logs().into_iter().collect(),
+            ..Default::default()
+        });
+        evm.db_mut().commit(result_and_state.state);
+    }
 
-    let mut evm = evm_config.evm_with_env(&mut db, evm_env);
-
-    let mut receipts = Vec::new();
     let mut block_blob_count = 0;
     let blob_params = chain_spec.blob_params_at_timestamp(attributes.timestamp);
     let max_blob_count =
         blob_params.as_ref().map(|params| params.max_blob_count).unwrap_or_default();
 
+    let mut total_fees = U256::ZERO;
+
+    let mut best_txs = best_txs(BestTransactionsAttributes::new(
+        base_fee,
+        evm_env.block_env.get_blob_gasprice().map(|gasprice| gasprice as u64),
+    ));
+
+    let block_number = evm_env.block_env.number.to::<u64>();
+    let beneficiary = evm_env.block_env.coinbase;
+
     while let Some(pool_tx) = best_txs.next() {
         // ensure we still have capacity for this transaction
-        if cumulative_gas_used + pool_tx.gas_limit() > block_gas_limit {
+        if cumulative_gas_used.saturating_add(pool_tx.gas_limit()) > block_gas_limit {
             // we can't fit this transaction into the block, so we need to mark it as invalid
             // which also removes all dependent transaction from the iterator before we can
             // continue
@@ -324,7 +339,7 @@ where
         let gas_used = result.gas_used();
 
         // add gas used by the transaction to cumulative gas used, before creating the receipt
-        cumulative_gas_used += gas_used;
+        cumulative_gas_used = cumulative_gas_used.saturating_add(gas_used);
 
         // Push transaction changeset and calculate header bloom filter for receipt.
         #[allow(clippy::needless_update)] // side-effect of optimism fields
@@ -387,10 +402,12 @@ where
     tracing::warn!(
         local_gas = cumulative_gas_used,
         receipt_gas = receipt_gas,
-        diff = (receipt_gas as i64 - cumulative_gas_used as i64),
+        diff = i64::try_from(receipt_gas).unwrap_or(i64::MAX)
+            - i64::try_from(cumulative_gas_used).unwrap_or(i64::MAX),
         "DEBUG: Gas accounting comparison"
     );
-    let gas_used = receipts.last().map(|r| r.cumulative_gas_used()).unwrap_or(cumulative_gas_used);
+    // Always use receipt_gas as the source of truth since it includes precompile costs
+    let gas_used = receipt_gas;
 
     // merge all transitions into bundle state, this would apply the withdrawal balance changes
     // and 4788 contract call
