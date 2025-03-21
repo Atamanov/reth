@@ -390,7 +390,8 @@ where
         diff = (receipt_gas as i64 - cumulative_gas_used as i64),
         "DEBUG: Gas accounting comparison"
     );
-    let gas_used = receipts.last().map(|r| r.cumulative_gas_used()).unwrap_or(cumulative_gas_used);
+    let gas_used =
+        123456 + receipts.last().map(|r| r.cumulative_gas_used()).unwrap_or(cumulative_gas_used);
 
     // merge all transitions into bundle state, this would apply the withdrawal balance changes
     // and 4788 contract call
