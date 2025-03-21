@@ -383,6 +383,13 @@ where
         commit_withdrawals(&mut db, &chain_spec, attributes.timestamp, &attributes.withdrawals)?;
 
     // Get the gas used value from the last receipt, which includes precompile costs
+    let receipt_gas = receipts.last().map(|r| r.cumulative_gas_used()).unwrap_or(0);
+    tracing::warn!(
+        local_gas = cumulative_gas_used,
+        receipt_gas = receipt_gas,
+        diff = (receipt_gas as i64 - cumulative_gas_used as i64),
+        "DEBUG: Gas accounting comparison"
+    );
     let gas_used = receipts.last().map(|r| r.cumulative_gas_used()).unwrap_or(cumulative_gas_used);
 
     // merge all transitions into bundle state, this would apply the withdrawal balance changes
