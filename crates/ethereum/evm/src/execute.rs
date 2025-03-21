@@ -188,7 +188,7 @@ where
         } else {
             cumulative_gas_used
         };
-        Ok(ExecuteOutput { receipts, gas_used: cumulative_gas_used })
+        Ok(ExecuteOutput { receipts, gas_used })
     }
 
     fn apply_post_execution_changes(
